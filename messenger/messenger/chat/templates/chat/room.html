@@ -1,0 +1,159 @@
+{% extends 'chat/base.html' %}
+
+{% block content %}
+<div style="display: grid; grid-template-rows: auto 1fr auto; height: 80vh; gap: 20px;">
+    <div style="background: white; padding: 20px; border-radius: 10px;">
+        <h3>Комната: {{ room.name }}</h3>
+    </div>
+    
+    <div id="chat-messages" style="background: white; padding: 20px; border-radius: 10px; overflow-y: auto;">
+        {% for message in messages %}
+        <div style="margin-bottom: 10px; padding: 10px; background: #f0f2f5; border-radius: 10px;">
+            <strong>{{ message.user.username }}</strong>: {{ message.content }}
+            <small style="color: #666; margin-left: 10px;">{{ message.timestamp|time:"H:i" }}</small>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <div style="background: white; padding: 20px; border-radius: 10px;">
+        <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+            <input type="text" id="chat-message-input" 
+                   placeholder="Введите сообщение..." 
+                   style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
+            <button id="chat-message-submit" class="btn">Отправить</button>
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <button id="voice-record-btn" class="btn" style="background: #dc3545;">
+                🎤 Начать запись
+            </button>
+            <div id="voice-status" style="padding: 10px; display: none;">
+                <span style="color: #dc3545;">● Запись...</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+{{ room.id|json_script:"room-id" }}
+{{ user.username|json_script:"username" }}
+
+<script>
+const roomId = JSON.parse(document.getElementById('room-id').textContent);
+const username = JSON.parse(document.getElementById('username').textContent);
+
+const chatSocket = new WebSocket(
+    'ws://' + window.location.host + '/ws/chat/' + roomId + '/'
+);
+
+chatSocket.onmessage = function(e) {
+    const data = JSON.parse(e.data);
+    
+    if (data.type === 'message') {
+        const messagesDiv = document.getElementById('chat-messages');
+        const messageDiv = document.createElement('div');
+        messageDiv.innerHTML = `
+            <strong>${data.username}</strong>: ${data.message}
+            <small style="color: #666; margin-left: 10px;">${new Date().toLocaleTimeString()}</small>
+        `;
+        messageDiv.style.marginBottom = '10px';
+        messageDiv.style.padding = '10px';
+        messageDiv.style.background = '#f0f2f5';
+        messageDiv.style.borderRadius = '10px';
+        messagesDiv.appendChild(messageDiv);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    } else if (data.type === 'voice_start') {
+        // Симуляция голосового сообщения
+        const messagesDiv = document.getElementById('chat-messages');
+        const messageDiv = document.createElement('div');
+        messageDiv.innerHTML = `
+            <strong>${data.username}</strong>: 🎤 Голосовое сообщение...
+            <small style="color: #666; margin-left: 10px;">${new Date().toLocaleTimeString()}</small>
+        `;
+        messageDiv.style.marginBottom = '10px';
+        messageDiv.style.padding = '10px';
+        messageDiv.style.background = '#f0f2f5';
+        messageDiv.style.borderRadius = '10px';
+        messagesDiv.appendChild(messageDiv);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+};
+
+chatSocket.onclose = function(e) {
+    console.error('Chat socket closed unexpectedly');
+};
+
+document.getElementById('chat-message-input').focus();
+document.getElementById('chat-message-input').onkeyup = function(e) {
+    if (e.keyCode === 13) {
+        document.getElementById('chat-message-submit').click();
+    }
+};
+
+document.getElementById('chat-message-submit').onclick = function(e) {
+    const messageInputDom = document.getElementById('chat-message-input');
+    const message = messageInputDom.value;
+    
+    if (message) {
+        chatSocket.send(JSON.stringify({
+            'type': 'message',
+            'message': message,
+            'username': username
+        }));
+        messageInputDom.value = '';
+    }
+};
+
+// Голосовая связь (симуляция)
+let isRecording = false;
+const voiceBtn = document.getElementById('voice-record-btn');
+const voiceStatus = document.getElementById('voice-status');
+
+voiceBtn.onclick = function() {
+    if (!isRecording) {
+        // Начало записи
+        isRecording = true;
+        voiceBtn.textContent = '⏹️ Остановить запись';
+        voiceBtn.style.background = '#6c757d';
+        voiceStatus.style.display = 'block';
+        
+        chatSocket.send(JSON.stringify({
+            'type': 'voice_start',
+            'username': username
+        }));
+        
+        // Симуляция записи в течение 3 секунд
+        setTimeout(() => {
+            if (isRecording) {
+                // Конец записи
+                isRecording = false;
+                voiceBtn.textContent = '🎤 Начать запись';
+                voiceBtn.style.background = '#dc3545';
+                voiceStatus.style.display = 'none';
+                
+                chatSocket.send(JSON.stringify({
+                    'type': 'voice_end',
+                    'username': username
+                }));
+                
+                // Отправка симулированного голосового сообщения
+                chatSocket.send(JSON.stringify({
+                    'type': 'message',
+                    'message': '🎤 Голосовое сообщение',
+                    'username': username
+                }));
+            }
+        }, 3000);
+    } else {
+        // Остановка записи
+        isRecording = false;
+        voiceBtn.textContent = '🎤 Начать запись';
+        voiceBtn.style.background = '#dc3545';
+        voiceStatus.style.display = 'none';
+        
+        chatSocket.send(JSON.stringify({
+            'type': 'voice_end',
+            'username': username
+        }));
+    }
+};
+</script>
+{% endblock %}

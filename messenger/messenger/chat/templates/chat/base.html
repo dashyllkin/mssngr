@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{% block title %}Messenger{% endblock %}</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f0f2f5;
+        }
+        .navbar {
+            background: #1877f2;
+            padding: 1rem;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .btn {
+            background: #1877f2;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn:hover {
+            background: #166fe5;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .errorlist {
+            color: #dc3545;
+            margin: 5px 0;
+            padding: 0;
+            list-style: none;
+        }
+        .errorlist li {
+            background: #f8d7da;
+            padding: 5px 10px;
+            border-radius: 3px;
+            margin: 2px 0;
+        }
+    </style>
+</head>
+<body>
+    {% if user.is_authenticated %}
+    <div class="navbar">
+        <h2>Messenger</h2>
+        <div>
+            <span>Привет, {{ user.username }}!</span>
+            <a href="{% url 'logout' %}" class="btn" style="margin-left: 20px;">Выйти</a>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>

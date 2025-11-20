@@ -1,0 +1,101 @@
+{% extends 'chat/base.html' %}
+
+{% block content %}
+<div style="display: grid; grid-template-columns: 350px 1fr; gap: 20px; height: 80vh;">
+    <!-- Боковая панель -->
+    <div style="background: white; padding: 20px; border-radius: 10px; display: flex; flex-direction: column; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <!-- Поиск пользователей -->
+        <div style="margin-bottom: 20px;">
+            <h3 style="margin-bottom: 15px; color: #1877f2;">Поиск пользователей</h3>
+            <form method="get" action="{% url 'search_users' %}">
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" name="q" placeholder="Введите имя пользователя..."
+                           style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
+                    <button type="submit" class="btn">Найти</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Список бесед -->
+        <div style="flex: 1; overflow-y: auto;">
+            <h3 style="margin-bottom: 15px; color: #1877f2;">Ваши беседы</h3>
+            {% if conversations_with_other %}
+                {% for item in conversations_with_other %}
+                    <div style="padding: 15px; border-bottom: 1px solid #eee; cursor: pointer;"
+                         onclick="location.href='{% url 'conversation' item.other_user.id %}'"
+                         class="conversation-item">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <div style="width: 40px; height: 40px; background: #1877f2; border-radius: 50%;
+                                      display: flex; align-items: center; justify-content: center; color: white; font-weight: bold;">
+                                {{ item.other_user.username|first|upper }}
+                            </div>
+                            <div style="flex: 1;">
+                                <strong style="color: #333;">{{ item.other_user.username }}</strong>
+                                {% if item.last_message %}
+                                    <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;
+                                             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                        {% if item.last_message.sender == user %}
+                                            Вы: {{ item.last_message.content }}
+                                        {% else %}
+                                            {{ item.last_message.content }}
+                                        {% endif %}
+                                    </p>
+                                    <small style="color: #999; font-size: 12px;">
+                                        {{ item.last_message.timestamp|date:"H:i" }}
+                                    </small>
+                                {% else %}
+                                    <p style="margin: 5px 0 0 0; color: #999; font-size: 14px;">
+                                        Нет сообщений
+                                    </p>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p style="color: #666; text-align: center; margin-top: 20px;">
+                    У вас пока нет бесед. Найдите пользователя чтобы начать общение.
+                </p>
+            {% endif %}
+        </div>
+
+        <!-- Все пользователи -->
+        <div style="margin-top: 20px; border-top: 1px solid #eee; padding-top: 20px;">
+            <h4 style="margin-bottom: 15px; color: #1877f2;">Все пользователи</h4>
+            {% for user_obj in all_users %}
+                <div style="padding: 10px; border-bottom: 1px solid #f0f0f0; cursor: pointer;"
+                     onclick="location.href='{% url 'conversation' user_obj.id %}'">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <div style="width: 35px; height: 35px; background: #28a745; border-radius: 50%;
+                                  display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: bold;">
+                            {{ user_obj.username|first|upper }}
+                        </div>
+                        <span style="color: #333;">{{ user_obj.username }}</span>
+                    </div>
+                </div>
+            {% empty %}
+                <p style="color: #666; font-size: 14px;">Нет других пользователей</p>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Основная область -->
+    <div style="background: white; padding: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-direction: column; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <div style="font-size: 72px; margin-bottom: 20px;">💬</div>
+        <h2 style="color: #1877f2; margin-bottom: 10px;">Добро пожаловать в Messenger!</h2>
+        <p style="color: #666; font-size: 16px; max-width: 400px;">
+            Выберите пользователя из списка слева или найдите его через поиск, чтобы начать общение.
+        </p>
+        <p style="color: #999; font-size: 14px; margin-top: 20px;">
+            Все сообщения сохраняются и будут доступны при следующем входе.
+        </p>
+    </div>
+</div>
+
+<style>
+    .conversation-item:hover {
+        background: #f8f9fa;
+        border-radius: 8px;
+    }
+</style>
+{% endblock %}

@@ -1,0 +1,132 @@
+{% extends 'chat/base.html' %}
+
+{% block content %}
+<div style="display: grid; grid-template-rows: auto 1fr auto; height: 80vh; gap: 20px;">
+    <!-- Заголовок беседы -->
+    <div style="background: white; padding: 20px; border-radius: 10px; display: flex; align-items: center; gap: 15px;">
+        <div style="width: 50px; height: 50px; background: #1877f2; border-radius: 50%; 
+                  display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 18px;">
+            {{ other_user.username|first|upper }}
+        </div>
+        <div>
+            <h3 style="margin: 0; color: #1877f2;">{{ other_user.username }}</h3>
+            <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;">
+                {% if other_user.is_online %}🟢 В сети{% else %}⚫ Не в сети{% endif %}
+            </p>
+        </div>
+    </div>
+    
+    <!-- Сообщения -->
+    <div id="chat-messages" style="background: white; padding: 20px; border-radius: 10px; overflow-y: auto;">
+        {% for message in messages %}
+        <div style="margin-bottom: 15px; display: flex; {% if message.sender == user %}justify-content: flex-end{% else %}justify-content: flex-start{% endif %}">
+            <div style="max-width: 70%;">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px; {% if message.sender == user %}flex-direction: row-reverse{% endif %}">
+                    <strong style="color: #1877f2;">{{ message.sender.username }}</strong>
+                    <small style="color: #666;">{{ message.timestamp|time:"H:i" }}</small>
+                </div>
+                <div style="background: {% if message.sender == user %}#1877f2{% else %}#f0f2f5{% endif %}; 
+                            color: {% if message.sender == user %}white{% else %}black{% endif %};
+                            padding: 12px 15px; border-radius: 18px; 
+                            {% if message.sender == user %}border-bottom-right-radius: 5px;{% else %}border-bottom-left-radius: 5px;{% endif %}">
+                    {{ message.content }}
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div style="text-align: center; color: #666; margin-top: 50px;">
+            <div style="font-size: 48px; margin-bottom: 20px;">💬</div>
+            <h3>Нет сообщений</h3>
+            <p>Начните общение первым!</p>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <!-- Форма отправки сообщения -->
+    <div style="background: white; padding: 20px; border-radius: 10px;">
+        <div style="display: flex; gap: 10px;">
+            <input type="text" id="chat-message-input" 
+                   placeholder="Введите сообщение..." 
+                   style="flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 25px; font-size: 16px;">
+            <button id="chat-message-submit" class="btn" style="border-radius: 25px; padding: 12px 25px;">Отправить</button>
+        </div>
+    </div>
+</div>
+
+{{ conversation.id|json_script:"conversation-id" }}
+{{ user.id|json_script:"user-id" }}
+{{ user.username|json_script:"username" }}
+
+<script>
+const conversationId = JSON.parse(document.getElementById('conversation-id').textContent);
+const userId = JSON.parse(document.getElementById('user-id').textContent);
+const username = JSON.parse(document.getElementById('username').textContent);
+
+const chatSocket = new WebSocket(
+    'ws://' + window.location.host + '/ws/chat/' + conversationId + '/'
+);
+
+chatSocket.onmessage = function(e) {
+    const data = JSON.parse(e.data);
+    
+    const messagesDiv = document.getElementById('chat-messages');
+    const messageDiv = document.createElement('div');
+    
+    // Определяем стиль в зависимости от отправителя
+    const isCurrentUser = data.user_id == userId;
+    
+    messageDiv.style.marginBottom = '15px';
+    messageDiv.style.display = 'flex';
+    messageDiv.style.justifyContent = isCurrentUser ? 'flex-end' : 'flex-start';
+    
+    messageDiv.innerHTML = `
+        <div style="max-width: 70%;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px; ${isCurrentUser ? 'flex-direction: row-reverse' : ''}">
+                <strong style="color: #1877f2;">${data.username}</strong>
+                <small style="color: #666;">${new Date().toLocaleTimeString()}</small>
+            </div>
+            <div style="background: ${isCurrentUser ? '#1877f2' : '#f0f2f5'}; 
+                        color: ${isCurrentUser ? 'white' : 'black'};
+                        padding: 12px 15px; border-radius: 18px; 
+                        ${isCurrentUser ? 'border-bottom-right-radius: 5px;' : 'border-bottom-left-radius: 5px;'}">
+                ${data.message}
+            </div>
+        </div>
+    `;
+    
+    messagesDiv.appendChild(messageDiv);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+};
+
+chatSocket.onclose = function(e) {
+    console.error('Chat socket closed unexpectedly');
+};
+
+document.getElementById('chat-message-input').focus();
+document.getElementById('chat-message-input').onkeyup = function(e) {
+    if (e.keyCode === 13) {
+        document.getElementById('chat-message-submit').click();
+    }
+};
+
+document.getElementById('chat-message-submit').onclick = function(e) {
+    const messageInputDom = document.getElementById('chat-message-input');
+    const message = messageInputDom.value.trim();
+    
+    if (message) {
+        chatSocket.send(JSON.stringify({
+            'message': message,
+            'username': username,
+            'user_id': userId
+        }));
+        messageInputDom.value = '';
+    }
+};
+
+// Прокрутка вниз при загрузке
+window.onload = function() {
+    const messagesDiv = document.getElementById('chat-messages');
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+};
+</script>
+{% endblock %}

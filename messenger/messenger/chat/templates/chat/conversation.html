@@ -1,0 +1,241 @@
+{% extends 'chat/base.html' %}
+
+{% block content %}
+<div style="display: grid; grid-template-rows: auto 1fr auto; height: 85vh; gap: 10px;">
+    <!-- Заголовок беседы -->
+    <div style="background: white; padding: 15px; border-radius: 10px; display: flex; align-items: center; gap: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <div style="width: 45px; height: 45px; background: #1877f2; border-radius: 50%;
+                  display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 16px;">
+            {{ other_user.username|first|upper }}
+        </div>
+        <div>
+            <h3 style="margin: 0; color: #1877f2;">{{ other_user.username }}</h3>
+            <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;">
+                {% if other_user.is_online %}🟢 В сети{% else %}⚫ Не в сети{% endif %}
+            </p>
+        </div>
+    </div>
+
+    <!-- Область сообщений -->
+    <div id="chat-messages" style="background: white; padding: 20px; border-radius: 10px; overflow-y: auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <!-- Сообщения загружаются через WebSocket -->
+    </div>
+
+    <!-- Форма отправки сообщения -->
+    <div style="background: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <div style="display: flex; gap: 10px;">
+            <input type="text" id="chat-message-input"
+                   placeholder="Введите сообщение..."
+                   style="flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 25px; font-size: 16px; outline: none;">
+            <button id="chat-message-submit" class="btn" style="border-radius: 25px; padding: 12px 25px; font-size: 16px;">Отправить</button>
+        </div>
+    </div>
+</div>
+
+{{ conversation.id|json_script:"conversation-id" }}
+{{ user.id|json_script:"user-id" }}
+{{ user.username|json_script:"username" }}
+
+<script>
+const conversationId = JSON.parse(document.getElementById('conversation-id').textContent);
+const userId = JSON.parse(document.getElementById('user-id').textContent);
+const username = JSON.parse(document.getElementById('username').textContent);
+
+// Переменные для управления историей
+let historyLoaded = false;
+let messagesCount = 0;
+const chatSocket = new WebSocket(
+    'ws://' + window.location.host + '/ws/chat/' + conversationId + '/'
+);
+
+// Функция для форматирования времени
+function formatTime(timestamp) {
+    if (!timestamp) return new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+
+    const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
+    return date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+}
+
+// Функция для прокрутки вниз
+function scrollToBottom() {
+    const messagesDiv = document.getElementById('chat-messages');
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+
+// Функция для добавления сообщения в чат
+function addMessageToChat(message, messageUsername, messageUserId, timestamp, messageId, isHistory = false) {
+    const messagesDiv = document.getElementById('chat-messages');
+
+    // Убираем заглушку только при первом сообщении
+    if (!historyLoaded && (messagesDiv.innerHTML.includes('Нет сообщений') || messagesDiv.innerHTML.includes('Загрузка'))) {
+        messagesDiv.innerHTML = '';
+        historyLoaded = true;
+    }
+
+    // Проверяем, нет ли уже такого сообщения (по ID)
+    if (messageId) {
+        const existingMessage = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (existingMessage) {
+            return; // Сообщение уже есть, не добавляем дубликат
+        }
+    }
+
+    const messageDiv = document.createElement('div');
+    if (messageId) {
+        messageDiv.setAttribute('data-message-id', messageId);
+    }
+
+    const isCurrentUser = parseInt(messageUserId) === parseInt(userId);
+    const displayTime = formatTime(timestamp);
+
+    messageDiv.style.marginBottom = '15px';
+    messageDiv.style.display = 'flex';
+    messageDiv.style.justifyContent = isCurrentUser ? 'flex-end' : 'flex-start';
+
+    messageDiv.innerHTML = `
+        <div style="max-width: 70%;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px; ${isCurrentUser ? 'flex-direction: row-reverse' : ''}">
+                <strong style="color: #1877f2; font-size: 14px;">${messageUsername}</strong>
+                <small style="color: #666; font-size: 12px;">${displayTime}</small>
+            </div>
+            <div style="background: ${isCurrentUser ? '#1877f2' : '#f0f2f5'};
+                        color: ${isCurrentUser ? 'white' : 'black'};
+                        padding: 10px 15px; border-radius: 18px;
+                        ${isCurrentUser ? 'border-bottom-right-radius: 5px;' : 'border-bottom-left-radius: 5px;'}
+                        font-size: 15px; line-height: 1.4;">
+                ${message}
+            </div>
+        </div>
+    `;
+
+    messagesDiv.appendChild(messageDiv);
+    messagesCount++;
+
+    // Для истории НЕ прокручиваем сразу, ждем пока вся история загрузится
+    // Для новых сообщений - сразу прокручиваем вниз
+    if (!isHistory) {
+        scrollToBottom();
+    }
+}
+
+// Функция для показа заглушки "нет сообщений"
+function showNoMessages() {
+    const messagesDiv = document.getElementById('chat-messages');
+    messagesDiv.innerHTML = `
+        <div style="text-align: center; color: #666; margin-top: 50px;">
+            <div style="font-size: 48px; margin-bottom: 20px;">💬</div>
+            <h3>Нет сообщений</h3>
+            <p>Начните общение первым!</p>
+        </div>
+    `;
+}
+
+// Переменная для отслеживания загрузки истории
+let historyMessagesProcessed = 0;
+let totalHistoryMessages = 0;
+
+// Показываем заглушку при загрузке
+document.addEventListener('DOMContentLoaded', function() {
+    const messagesDiv = document.getElementById('chat-messages');
+    messagesDiv.innerHTML = `
+        <div style="text-align: center; color: #666; margin-top: 50px;">
+            <div style="font-size: 48px; margin-bottom: 20px;">💬</div>
+            <h3>Загрузка истории сообщений...</h3>
+        </div>
+    `;
+});
+
+chatSocket.onmessage = function(e) {
+    const data = JSON.parse(e.data);
+
+    if (data.type === 'history_message') {
+        // Добавляем сообщение из истории
+        addMessageToChat(
+            data.message,
+            data.username,
+            data.user_id,
+            data.timestamp,
+            data.message_id,
+            true // Помечаем как историческое сообщение
+        );
+
+        historyMessagesProcessed++;
+
+        // Если это последнее сообщение истории - прокручиваем вниз
+        if (historyMessagesProcessed >= totalHistoryMessages) {
+            setTimeout(scrollToBottom, 100);
+        }
+
+    } else if (data.type === 'message') {
+        // Добавляем новое сообщение
+        addMessageToChat(
+            data.message,
+            data.username,
+            data.user_id,
+            data.timestamp,
+            data.message_id,
+            false // Новое сообщение
+        );
+
+    } else if (data.type === 'history_info') {
+        // Получаем информацию о количестве сообщений в истории
+        totalHistoryMessages = data.total_messages;
+    } else if (data.type === 'no_messages') {
+        // Нет сообщений в истории
+        showNoMessages();
+        historyLoaded = true;
+    }
+};
+
+chatSocket.onopen = function(e) {
+    console.log('WebSocket connected successfully');
+};
+
+chatSocket.onclose = function(e) {
+    console.error('Chat socket closed unexpectedly');
+
+    // Если соединение закрылось и нет сообщений, показываем заглушку
+    const messagesDiv = document.getElementById('chat-messages');
+    if (messagesDiv.children.length === 0 || messagesDiv.innerHTML.includes('Загрузка')) {
+        showNoMessages();
+    }
+};
+
+chatSocket.onerror = function(e) {
+    console.error('WebSocket error:', e);
+};
+
+// После загрузки DOM, если через 3 секунды нет сообщений, показываем "нет сообщений"
+setTimeout(() => {
+    const messagesDiv = document.getElementById('chat-messages');
+    if (messagesDiv.innerHTML.includes('Загрузка истории сообщений...')) {
+        showNoMessages();
+    }
+}, 3000);
+
+// Фокусировка на поле ввода
+document.getElementById('chat-message-input').focus();
+
+// Отправка по Enter
+document.getElementById('chat-message-input').onkeyup = function(e) {
+    if (e.keyCode === 13) {
+        document.getElementById('chat-message-submit').click();
+    }
+};
+
+// Отправка по клику
+document.getElementById('chat-message-submit').onclick = function() {
+    const messageInput = document.getElementById('chat-message-input');
+    const message = messageInput.value.trim();
+
+    if (message) {
+        chatSocket.send(JSON.stringify({
+            'message': message,
+            'username': username,
+            'user_id': userId
+        }));
+        messageInput.value = '';
+    }
+};
+</script>
+{% endblock %}
