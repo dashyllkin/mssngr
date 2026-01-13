@@ -11,6 +11,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
         self.conversation_id = self.scope['url_route']['kwargs']['conversation_id']
         self.room_group_name = f'chat_{self.conversation_id}'
 
+        # Проверяем, что пользователь является участником беседы
+        if not await self.is_participant():
+            await self.close()
+            return
+
         await self.channel_layer.group_add(
             self.room_group_name,
             self.channel_name
@@ -29,25 +34,53 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def receive(self, text_data):
         text_data_json = json.loads(text_data)
-        message = text_data_json['message']
-        username = text_data_json['username']
-        user_id = text_data_json['user_id']
+        message_type = text_data_json.get('type', 'message')
 
-        # Сохраняем сообщение в базу
-        saved_message = await self.save_message(message, user_id)
+        if message_type == 'message':
+            message = text_data_json['message']
+            username = text_data_json['username']
+            user_id = text_data_json['user_id']
 
-        # Отправляем сообщение всем в комнате
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                'type': 'chat_message',
-                'message': message,
-                'username': username,
-                'user_id': user_id,
-                'timestamp': saved_message.timestamp.isoformat(),
-                'message_id': saved_message.id,
-            }
-        )
+            # Проверяем, что отправитель - текущий пользователь
+            if int(user_id) != self.scope['user'].id:
+                return
+
+            # Сохраняем сообщение в базу
+            saved_message = await self.save_message(message, user_id)
+
+            # Отправляем сообщение всем в комнате
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    'type': 'chat_message',
+                    'message': message,
+                    'username': username,
+                    'user_id': user_id,
+                    'timestamp': saved_message.timestamp.isoformat(),
+                    'message_id': saved_message.id,
+                }
+            )
+        elif message_type == 'delete_message':
+            message_id = text_data_json['message_id']
+            user_id = text_data_json['user_id']
+
+            # Проверяем, что удаляет владелец сообщения
+            if int(user_id) != self.scope['user'].id:
+                return
+
+            # Удаляем сообщение
+            success = await self.delete_message(message_id, user_id)
+
+            if success:
+                # Отправляем информацию об удалении всем в комнате
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': 'message_deleted',
+                        'message_id': message_id,
+                        'user_id': user_id,
+                    }
+                )
 
     async def chat_message(self, event):
         # Отправляем сообщение WebSocket клиенту
@@ -58,6 +91,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'user_id': event['user_id'],
             'timestamp': event['timestamp'],
             'message_id': event['message_id'],
+        }))
+
+    async def message_deleted(self, event):
+        # Отправляем информацию об удалении сообщения
+        await self.send(text_data=json.dumps({
+            'type': 'message_deleted',
+            'message_id': event['message_id'],
+            'user_id': event['user_id'],
         }))
 
     async def send_message_history(self):
@@ -86,7 +127,22 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'user_id': message['sender_id'],
                 'timestamp': message['timestamp'].isoformat(),
                 'message_id': message['id'],
+                'is_deleted': message['is_deleted'],
+                'can_delete': message['sender_id'] == self.scope['user'].id,
             }))
+
+    @sync_to_async
+    def is_participant(self):
+        """Проверяет, является ли пользователь участником беседы"""
+        try:
+            conversation = Conversation.objects.get(
+                id=self.conversation_id,
+                is_active=True,
+                participants=self.scope['user']
+            )
+            return True
+        except Conversation.DoesNotExist:
+            return False
 
     @sync_to_async
     def save_message(self, message, user_id):
@@ -99,10 +155,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
 
     @sync_to_async
+    def delete_message(self, message_id, user_id):
+        try:
+            message = Message.objects.get(id=message_id, sender_id=user_id)
+            message.soft_delete()
+            return True
+        except Message.DoesNotExist:
+            return False
+
+    @sync_to_async
     def get_conversation_messages(self):
         try:
             conversation = Conversation.objects.get(id=self.conversation_id)
-            messages = conversation.messages.select_related('sender').order_by('timestamp')
-            return list(messages.values('id', 'content', 'sender_id', 'sender__username', 'timestamp'))
+            # Получаем только не удаленные сообщения
+            messages = conversation.messages.select_related('sender').filter(is_deleted=False).order_by('timestamp')
+            return list(messages.values('id', 'content', 'sender_id', 'sender__username', 'timestamp', 'is_deleted'))
         except Conversation.DoesNotExist:
             return []

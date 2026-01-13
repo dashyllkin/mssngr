@@ -3,17 +3,28 @@
 {% block content %}
 <div style="display: grid; grid-template-rows: auto 1fr auto; height: 85vh; gap: 10px;">
     <!-- Заголовок беседы -->
-    <div style="background: white; padding: 15px; border-radius: 10px; display: flex; align-items: center; gap: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-        <div style="width: 45px; height: 45px; background: #1877f2; border-radius: 50%;
-                  display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 16px;">
-            {{ other_user.username|first|upper }}
+    <div style="background: white; padding: 15px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 45px; height: 45px; background: #1877f2; border-radius: 50%;
+                      display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 16px;">
+                {{ other_user.username|first|upper }}
+            </div>
+            <div>
+                <h3 style="margin: 0; color: #1877f2;">{{ other_user.username }}</h3>
+                <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;">
+                    {% if other_user.is_online %}🟢 В сети{% else %}⚫ Не в сети{% endif %}
+                </p>
+            </div>
         </div>
-        <div>
-            <h3 style="margin: 0; color: #1877f2;">{{ other_user.username }}</h3>
-            <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;">
-                {% if other_user.is_online %}🟢 В сети{% else %}⚫ Не в сети{% endif %}
-            </p>
-        </div>
+
+        <!-- Кнопка удаления всего чата -->
+        <form method="post" action="{% url 'delete_conversation' conversation.id %}"
+              onsubmit="return confirm('Удалить весь чат с {{ other_user.username }}? Это действие нельзя отменить.');">
+            {% csrf_token %}
+            <button type="submit" class="btn" style="background: #dc3545; border-radius: 20px;">
+                Удалить чат
+            </button>
+        </form>
     </div>
 
     <!-- Область сообщений -->
@@ -21,14 +32,49 @@
         <!-- Сообщения загружаются через WebSocket -->
     </div>
 
-    <!-- Форма отправки сообщения -->
+    <!-- Форма отправки сообщения с эмодзи -->
     <div style="background: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-        <div style="display: flex; gap: 10px;">
+        <!-- Эмодзи-панель -->
+        <div id="emoji-panel" style="display: none; margin-bottom: 10px; padding: 10px; background: #f8f9fa; border-radius: 10px; border: 1px solid #e9ecef;">
+            <div style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; max-height: 120px; overflow-y: auto;">
+                <!-- Популярные смайлики -->
+                <span class="emoji" data-emoji="😀">😀</span>
+                <span class="emoji" data-emoji="😃">😃</span>
+                <span class="emoji" data-emoji="😄">😄</span>
+                <span class="emoji" data-emoji="😁">😁</span>
+                <span class="emoji" data-emoji="😆">😆</span>
+                <span class="emoji" data-emoji="😅">😅</span>
+                <span class="emoji" data-emoji="😂">😂</span>
+                <span class="emoji" data-emoji="🤣">🤣</span>
+
+                <!-- ... остальные эмодзи ... -->
+            </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; align-items: flex-end;">
+            <!-- Кнопка эмодзи -->
+            <button id="emoji-toggle" type="button" style="background: none; border: none; font-size: 24px; cursor: pointer; padding: 5px; border-radius: 5px; flex-shrink: 0;" title="Смайлики">
+                😊
+            </button>
+
+            <!-- Поле ввода -->
             <input type="text" id="chat-message-input"
                    placeholder="Введите сообщение..."
-                   style="flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 25px; font-size: 16px; outline: none;">
-            <button id="chat-message-submit" class="btn" style="border-radius: 25px; padding: 12px 25px; font-size: 16px;">Отправить</button>
+                   style="flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 25px; font-size: 16px; outline: none; min-height: 20px;">
+
+            <!-- Кнопка отправки -->
+            <button id="chat-message-submit" class="btn" style="border-radius: 25px; padding: 12px 25px; font-size: 16px; flex-shrink: 0;">Отправить</button>
         </div>
+    </div>
+</div>
+
+<!-- Контекстное меню для сообщений -->
+<div id="message-context-menu" style="display: none; position: fixed; background: white; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; padding: 5px 0; min-width: 150px;">
+    <div id="context-menu-delete" style="padding: 8px 12px; cursor: pointer; color: #dc3545; font-size: 14px; display: none;">
+        🗑️ Удалить сообщение
+    </div>
+    <div id="context-menu-copy" style="padding: 8px 12px; cursor: pointer; color: #333; font-size: 14px;">
+        📋 Копировать текст
     </div>
 </div>
 
@@ -48,6 +94,38 @@ const chatSocket = new WebSocket(
     'ws://' + window.location.host + '/ws/chat/' + conversationId + '/'
 );
 
+// Эмодзи-функционал
+let emojiPanelVisible = false;
+
+// Контекстное меню
+let contextMenu = null;
+let currentContextMessageId = null;
+
+// Функция для переключения панели эмодзи
+function toggleEmojiPanel() {
+    const emojiPanel = document.getElementById('emoji-panel');
+    emojiPanelVisible = !emojiPanelVisible;
+
+    if (emojiPanelVisible) {
+        emojiPanel.style.display = 'block';
+    } else {
+        emojiPanel.style.display = 'none';
+    }
+}
+
+// Функция для вставки эмодзи в поле ввода
+function insertEmoji(emoji) {
+    const messageInput = document.getElementById('chat-message-input');
+    const cursorPos = messageInput.selectionStart;
+    const textBefore = messageInput.value.substring(0, cursorPos);
+    const textAfter = messageInput.value.substring(cursorPos);
+
+    messageInput.value = textBefore + emoji + textAfter;
+    messageInput.focus();
+    messageInput.selectionStart = cursorPos + emoji.length;
+    messageInput.selectionEnd = cursorPos + emoji.length;
+}
+
 // Функция для форматирования времени
 function formatTime(timestamp) {
     if (!timestamp) return new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
@@ -62,8 +140,106 @@ function scrollToBottom() {
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
 }
 
+// Функция для показа контекстного меню
+function showContextMenu(event, messageId, isCurrentUser, isDeleted) {
+    event.preventDefault(); // Предотвращаем стандартное контекстное меню
+
+    contextMenu = document.getElementById('message-context-menu');
+    currentContextMessageId = messageId;
+
+    // Показываем кнопку удаления только для своих и не удаленных сообщений
+    const deleteBtn = document.getElementById('context-menu-delete');
+    if (isCurrentUser && !isDeleted) {
+        deleteBtn.style.display = 'block';
+    } else {
+        deleteBtn.style.display = 'none';
+    }
+
+    // Позиционируем меню рядом с курсором
+    contextMenu.style.display = 'block';
+    contextMenu.style.left = event.pageX + 'px';
+    contextMenu.style.top = event.pageY + 'px';
+
+    // Гарантируем, что меню не выйдет за границы экрана
+    const rect = contextMenu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+        contextMenu.style.left = (event.pageX - rect.width) + 'px';
+    }
+    if (rect.bottom > window.innerHeight) {
+        contextMenu.style.top = (event.pageY - rect.height) + 'px';
+    }
+}
+
+// Функция для скрытия контекстного меню
+function hideContextMenu() {
+    if (contextMenu) {
+        contextMenu.style.display = 'none';
+        currentContextMessageId = null;
+    }
+}
+
+// Функция для копирования текста сообщения
+function copyMessageText(messageId) {
+    const messageDiv = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (messageDiv) {
+        const messageContent = messageDiv.querySelector('div > div:last-child');
+        if (messageContent) {
+            const text = messageContent.textContent || messageContent.innerText;
+            navigator.clipboard.writeText(text).then(() => {
+                // Показываем временное уведомление
+                showTempNotification('Текст скопирован в буфер обмена');
+            }).catch(() => {
+                // Fallback для старых браузеров
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                showTempNotification('Текст скопирован в буфер обмена');
+            });
+        }
+    }
+    hideContextMenu();
+}
+
+// Функция для показа временного уведомления
+function showTempNotification(message) {
+    const notification = document.createElement('div');
+    notification.textContent = message;
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: #28a745;
+        color: white;
+        padding: 10px 15px;
+        border-radius: 5px;
+        z-index: 1001;
+        font-size: 14px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    `;
+    document.body.appendChild(notification);
+
+    setTimeout(() => {
+        document.body.removeChild(notification);
+    }, 2000);
+}
+
+// Функция для удаления сообщения
+function deleteMessage(messageId) {
+    if (confirm('Удалить это сообщение?')) {
+        chatSocket.send(JSON.stringify({
+            'type': 'delete_message',
+            'message_id': parseInt(messageId),
+            'user_id': userId
+        }));
+    }
+    hideContextMenu();
+}
+
 // Функция для добавления сообщения в чат
-function addMessageToChat(message, messageUsername, messageUserId, timestamp, messageId, isHistory = false) {
+function addMessageToChat(message, messageUsername, messageUserId, timestamp, messageId, isHistory = false, canDelete = false, isDeleted = false) {
     const messagesDiv = document.getElementById('chat-messages');
 
     // Убираем заглушку только при первом сообщении
@@ -91,25 +267,60 @@ function addMessageToChat(message, messageUsername, messageUserId, timestamp, me
     messageDiv.style.marginBottom = '15px';
     messageDiv.style.display = 'flex';
     messageDiv.style.justifyContent = isCurrentUser ? 'flex-end' : 'flex-start';
+    messageDiv.style.position = 'relative';
+    messageDiv.style.cursor = 'context-menu';
+
+    // Если сообщение удалено, показываем специальный стиль
+    const messageContent = isDeleted ?
+        '<em style="color: #999; font-style: italic;">Сообщение удалено</em>' :
+        message;
 
     messageDiv.innerHTML = `
-        <div style="max-width: 70%;">
+        <div style="max-width: 70%; position: relative;">
             <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px; ${isCurrentUser ? 'flex-direction: row-reverse' : ''}">
                 <strong style="color: #1877f2; font-size: 14px;">${messageUsername}</strong>
                 <small style="color: #666; font-size: 12px;">${displayTime}</small>
             </div>
-            <div style="background: ${isCurrentUser ? '#1877f2' : '#f0f2f5'};
-                        color: ${isCurrentUser ? 'white' : 'black'};
+            <div style="background: ${isDeleted ? 'transparent' : (isCurrentUser ? '#1877f2' : '#f0f2f5')};
+                        color: ${isDeleted ? '#999' : (isCurrentUser ? 'white' : 'black')};
                         padding: 10px 15px; border-radius: 18px;
                         ${isCurrentUser ? 'border-bottom-right-radius: 5px;' : 'border-bottom-left-radius: 5px;'}
-                        font-size: 15px; line-height: 1.4;">
-                ${message}
+                        font-size: 15px; line-height: 1.4; word-wrap: break-word;
+                        ${isDeleted ? 'border: 1px dashed #ddd;' : ''}
+                        user-select: text;">
+                ${messageContent}
             </div>
         </div>
     `;
 
     messagesDiv.appendChild(messageDiv);
     messagesCount++;
+
+    // Добавляем обработчик правого клика для контекстного меню
+    if (!isDeleted) {
+        messageDiv.addEventListener('contextmenu', function(e) {
+            showContextMenu(e, messageId, isCurrentUser, isDeleted);
+        });
+
+        // Подсветка при наведении (только для не удаленных сообщений)
+        messageDiv.addEventListener('mouseenter', function() {
+            if (!isDeleted) {
+                this.style.backgroundColor = 'rgba(0,0,0,0.02)';
+                this.style.borderRadius = '10px';
+                this.style.margin = '0 -5px';
+                this.style.padding = '0 5px';
+            }
+        });
+
+        messageDiv.addEventListener('mouseleave', function() {
+            if (!isDeleted) {
+                this.style.backgroundColor = '';
+                this.style.borderRadius = '';
+                this.style.margin = '';
+                this.style.padding = '';
+            }
+        });
+    }
 
     // Для истории НЕ прокручиваем сразу, ждем пока вся история загрузится
     // Для новых сообщений - сразу прокручиваем вниз
@@ -143,8 +354,90 @@ document.addEventListener('DOMContentLoaded', function() {
             <h3>Загрузка истории сообщений...</h3>
         </div>
     `;
+
+    // Инициализация эмодзи-панели
+    const emojiToggle = document.getElementById('emoji-toggle');
+    const emojiPanel = document.getElementById('emoji-panel');
+    const emojis = document.querySelectorAll('.emoji');
+
+    // Обработчик кнопки эмодзи
+    if (emojiToggle) {
+        emojiToggle.addEventListener('click', toggleEmojiPanel);
+    }
+
+    // Обработчики для каждого эмодзи
+    if (emojis) {
+        emojis.forEach(emoji => {
+            emoji.addEventListener('click', function() {
+                insertEmoji(this.getAttribute('data-emoji'));
+            });
+
+            // Стили для эмодзи в панели
+            emoji.style.cursor = 'pointer';
+            emoji.style.padding = '5px';
+            emoji.style.borderRadius = '5px';
+            emoji.style.textAlign = 'center';
+            emoji.style.fontSize = '18px';
+
+            emoji.addEventListener('mouseenter', function() {
+                this.style.backgroundColor = '#e9ecef';
+            });
+
+            emoji.addEventListener('mouseleave', function() {
+                this.style.backgroundColor = 'transparent';
+            });
+        });
+    }
+
+    // Закрытие панели эмодзи при клике вне её
+    document.addEventListener('click', function(event) {
+        if (emojiPanel && !emojiPanel.contains(event.target) && event.target !== emojiToggle) {
+            emojiPanelVisible = false;
+            emojiPanel.style.display = 'none';
+        }
+    });
+
+    // Инициализация контекстного меню
+    const contextMenu = document.getElementById('message-context-menu');
+    const deleteOption = document.getElementById('context-menu-delete');
+    const copyOption = document.getElementById('context-menu-copy');
+
+    // Обработчики для пунктов контекстного меню
+    deleteOption.addEventListener('click', function() {
+        if (currentContextMessageId) {
+            deleteMessage(currentContextMessageId);
+        }
+    });
+
+    copyOption.addEventListener('click', function() {
+        if (currentContextMessageId) {
+            copyMessageText(currentContextMessageId);
+        }
+    });
+
+    // Закрытие контекстного меню при клике вне его
+    document.addEventListener('click', function(event) {
+        if (contextMenu && !contextMenu.contains(event.target)) {
+            hideContextMenu();
+        }
+    });
+
+    // Закрытие контекстного меню при нажатии ESC
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            hideContextMenu();
+        }
+    });
+
+    // Предотвращаем стандартное контекстное меню на сообщениях
+    document.addEventListener('contextmenu', function(event) {
+        if (event.target.closest('[data-message-id]')) {
+            event.preventDefault();
+        }
+    });
 });
 
+// Обработчик сообщений от WebSocket
 chatSocket.onmessage = function(e) {
     const data = JSON.parse(e.data);
 
@@ -156,7 +449,9 @@ chatSocket.onmessage = function(e) {
             data.user_id,
             data.timestamp,
             data.message_id,
-            true // Помечаем как историческое сообщение
+            true, // Помечаем как историческое сообщение
+            data.can_delete,
+            data.is_deleted
         );
 
         historyMessagesProcessed++;
@@ -174,8 +469,27 @@ chatSocket.onmessage = function(e) {
             data.user_id,
             data.timestamp,
             data.message_id,
-            false // Новое сообщение
+            false, // Новое сообщение
+            true,   // Можно удалить (свои сообщения)
+            false   // Не удалено
         );
+
+    } else if (data.type === 'message_deleted') {
+        // Обновляем удаленное сообщение
+        const messageDiv = document.querySelector(`[data-message-id="${data.message_id}"]`);
+        if (messageDiv) {
+            const messageContent = messageDiv.querySelector('div > div:last-child');
+
+            if (messageContent) {
+                messageContent.innerHTML = '<em style="color: #999; font-style: italic;">Сообщение удалено</em>';
+                messageContent.style.background = 'transparent';
+                messageContent.style.color = '#999';
+                messageContent.style.border = '1px dashed #ddd';
+            }
+
+            // Убираем обработчики контекстного меню
+            messageDiv.replaceWith(messageDiv.cloneNode(true));
+        }
 
     } else if (data.type === 'history_info') {
         // Получаем информацию о количестве сообщений в истории
@@ -230,12 +544,58 @@ document.getElementById('chat-message-submit').onclick = function() {
 
     if (message) {
         chatSocket.send(JSON.stringify({
+            'type': 'message',
             'message': message,
             'username': username,
             'user_id': userId
         }));
         messageInput.value = '';
+
+        // Закрываем панель эмодзи после отправки
+        if (emojiPanelVisible) {
+            toggleEmojiPanel();
+        }
     }
 };
 </script>
+
+<style>
+    /* Стили для эмодзи в сообщениях */
+    .emoji-message {
+        font-size: 18px;
+        line-height: 1.2;
+    }
+
+    /* Анимация для кнопки эмодзи */
+    #emoji-toggle:hover {
+        background-color: #f0f2f5 !important;
+        transform: scale(1.1);
+        transition: all 0.2s ease;
+    }
+
+    /* Стили для панели эмодзи */
+    #emoji-panel {
+        animation: fadeIn 0.2s ease-in-out;
+    }
+
+    /* Стили для контекстного меню */
+    #message-context-menu div:hover {
+        background-color: #f8f9fa;
+    }
+
+    /* Анимация для контекстного меню */
+    #message-context-menu {
+        animation: fadeInScale 0.15s ease-out;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(-10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes fadeInScale {
+        from { opacity: 0; transform: scale(0.9); }
+        to { opacity: 1; transform: scale(1); }
+    }
+</style>
 {% endblock %}

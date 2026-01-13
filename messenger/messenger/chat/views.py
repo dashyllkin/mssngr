@@ -3,8 +3,9 @@ from django.contrib.auth import login, logout, authenticate
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm, AuthenticationForm
 from django.contrib import messages
-from django.db.models import Q, Max, OuterRef, Subquery
+from django.db.models import Q, Max
 from django.contrib.auth.models import User
+from django.http import JsonResponse
 from .models import Conversation, Message
 
 
@@ -49,14 +50,18 @@ def logout_view(request):
 
 @login_required
 def index(request):
-    # Получаем все беседы пользователя с последним сообщением
-    conversations = Conversation.objects.filter(participants=request.user)
+    # Получаем только активные беседы пользователя
+    conversations = Conversation.objects.filter(
+        participants=request.user,
+        is_active=True
+    )
 
     # Добавляем информацию о втором участнике и последнем сообщении для каждой беседы
     conversations_with_other = []
     for conversation in conversations:
         other_user = conversation.participants.exclude(id=request.user.id).first()
-        last_message = conversation.messages.order_by('-timestamp').first()
+        # Получаем последнее НЕ удаленное сообщение
+        last_message = conversation.messages.filter(is_deleted=False).order_by('-timestamp').first()
 
         conversations_with_other.append({
             'conversation': conversation,
@@ -83,9 +88,10 @@ def index(request):
 def conversation(request, user_id):
     other_user = get_object_or_404(User, id=user_id)
 
-    # Находим или создаем беседу между пользователями
+    # Находим активную беседу между пользователями (ИСПРАВЛЕННЫЙ ФИЛЬТР)
     conversation_obj = Conversation.objects.filter(
-        participants=request.user
+        participants=request.user,
+        is_active=True
     ).filter(
         participants=other_user
     ).first()
@@ -119,3 +125,29 @@ def search_users(request):
         'users': users,
         'query': query
     })
+
+
+@login_required
+def delete_conversation(request, conversation_id):
+    if request.method == 'POST':
+        conversation = get_object_or_404(
+            Conversation,
+            id=conversation_id,
+            participants=request.user,  # Исправлено - один фильтр
+            is_active=True
+        )
+        conversation.soft_delete()
+        messages.success(request, 'Чат удален')
+        return redirect('index')
+
+    return redirect('index')
+
+
+@login_required
+def delete_message(request, message_id):
+    if request.method == 'POST':
+        message = get_object_or_404(Message, id=message_id, sender=request.user)
+        message.soft_delete()
+        return JsonResponse({'success': True})
+
+    return JsonResponse({'success': False, 'error': 'Invalid request'})
